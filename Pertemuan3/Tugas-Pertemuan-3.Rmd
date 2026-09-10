@@ -1,0 +1,88 @@
+---
+title: "Tugas-Pertemuan-3"
+author: "Rafi' Dzaky H."
+date: "2026-09-10"
+output: html_document
+---
+
+1. Persiapan Data
+##Packages
+```{r}
+#install.packages(c("dLagM", "dynlm", "MLmetrics", "lmtest", "car"))
+library(dLagM)
+library(dynlm)
+library(MLmetrics)
+library(lmtest)
+library(car)
+library(dplyr)
+```
+
+##Impor dan Pembagian Data
+```{r}
+# Impor Data
+data <- read.csv("C:/Users/ACER/Documents/mpdw/Pertemuan3/NewDelhi_Air_quality.csv")
+
+data <- data[order(data$ts), ]
+
+n <- nrow(data)          # 72
+train <- data[1:60, ]
+test  <- data[61:72, ]
+train.ts <- ts(train); test.ts <- ts(test)
+
+# Mengubah format data menjadi objek Time Series (ts)
+train.ts <- ts(train)
+test.ts <- ts(test)
+data.ts <- ts(data)
+
+```
+Data terlebih dahulu diurutkan berdasarkan variabel waktu (`ts`) agar urutan pengamatan sesuai dengan struktur runtun waktu. Selanjutnya, sebanyak 60 observasi pertama digunakan sebagai **data training** untuk membangun model, sedangkan 12 observasi terakhir digunakan sebagai **data testing** untuk mengevaluasi kemampuan peramalan model.
+
+Pembagian ini penting karena data testing tidak digunakan saat estimasi model, sehingga kemampuan model dalam meramalkan data yang belum digunakan dalam proses estimasi dapat dinilai secara lebih objektif.
+
+2. Autoregressive Distributed Lag (ARDL)
+```{r}
+# 1. ARDL awal (p=1, q=1)
+model.ardl <- ardlDlm(formula = AQI ~ CO, data = train, p = 1, q = 1)
+summary(model.ardl)
+```
+Secara umum, koefisien `CO` menunjukkan perubahan AQI yang berkaitan dengan perubahan konsentrasi CO pada periode berjalan, sedangkan koefisien lag `CO` menunjukkan pengaruh CO dari periode sebelumnya. Komponen autoregresif AQI menunjukkan ketergantungan AQI saat ini terhadap AQI pada periode sebelumnya.
+```{r}
+# 2. Cari lag optimum (AIC)
+model.ardl.opt <- ardlBoundOrders(data = data.frame(train), ic = "AIC", formula = AQI ~ CO)
+model.ardl.opt
+```
+Pemilihan lag dilakukan menggunakan **Akaike Information Criterion (AIC)**. Prinsip pemilihan berdasarkan AIC adalah memilih spesifikasi model dengan nilai AIC yang paling kecil di antara model-model kandidat.
+
+Lag yang lebih panjang memungkinkan model menangkap pengaruh masa lalu yang lebih jauh, tetapi penggunaan terlalu banyak lag dapat membuat model menjadi lebih kompleks. Oleh karena itu, AIC digunakan untuk mencari keseimbangan antara kemampuan model menjelaskan data dan kompleksitas model.
+```{r}
+# 3. ARDL optimum
+model.ardl.opt.fit <- ardlDlm(formula = AQI ~ CO, data = train, p = 6, q = 5)
+summary(model.ardl.opt.fit)
+```
+Model memiliki kemampuan yang sangat baik dalam menjelaskan variasi AQI, dengan nilai Adjusted R-squared sebesar 92,19%. Secara simultan, model signifikan berdasarkan uji F dengan p-value < 2,2 × 10⁻¹⁶. Secara parsial, CO lag-2 berpengaruh negatif signifikan, sedangkan CO lag-6 berpengaruh positif signifikan terhadap AQI. Selain itu, AQI lag-1 berpengaruh positif dan sangat signifikan, yang menunjukkan bahwa nilai AQI periode sebelumnya sangat memengaruhi AQI periode sekarang.
+```{r}
+# 4. Uji asumsi (pendekatan dynlm setara)
+cons_lm <- dynlm(AQI ~ CO + L(CO,1)+L(CO,2)+L(CO,3)+L(CO,4)+L(CO,5)+L(CO,6)
+                       + L(AQI,1)+L(AQI,2)+L(AQI,3)+L(AQI,4)+L(AQI,5), data = train.ts)
+dwtest(cons_lm)          # autokorelasi
+bptest(cons_lm)          # heteroskedastisitas
+shapiro.test(residuals(cons_lm))  # normalitas
+```
+Interpretasi singkat:
+
+Durbin-Watson: p-value = 0,2472 > 0,05 → tidak terdapat autokorelasi pada residual.
+Breusch-Pagan: p-value = 0,9474 > 0,05 → tidak terdapat heteroskedastisitas, sehingga residual bersifat homoskedastis.
+Shapiro-Wilk: p-value = 0,1901 > 0,05 → residual berdistribusi normal.
+
+Kesimpulan: Ketiga uji menunjukkan bahwa asumsi residual model terpenuhi.
+```{r}
+# 5. Forecast & MAPE
+fore.ardl.opt <- forecast(model = model.ardl.opt.fit, x = test$CO, h = 12)
+mape.ardl.opt <- MAPE(fore.ardl.opt$forecasts, test$AQI)
+fore.ardl.opt
+mape.ardl.opt
+```
+Hasil forecasting menghasilkan prediksi AQI untuk 12 periode ke depan, dengan nilai berkisar antara 20,49 hingga 26,62 dan menunjukkan tren meningkat. Nilai MAPE = 0,0734 atau sekitar 7,34%, sehingga akurasi peramalan model dapat dikategorikan sangat baik.
+
+#Kesimpulan
+Berdasarkan analisis ARDL, model dibangun menggunakan 60 observasi sebagai data training dan 12 observasi sebagai data testing. Model awal ARDL dengan lag (1,1) kemudian dibandingkan dengan spesifikasi lag yang lebih panjang. Model yang digunakan pada tahap estimasi akhir adalah ARDL dengan `p = 6` dan `q = 5`. Kelayakan residual dievaluasi melalui uji Durbin-Watson Breusch-Pagan, dan Shapiro-Wilk. Selanjutnya, kemampuan model dalam melakukan peramalan dievaluasi menggunakan MAPE. Interpretasi akhir setiap uji mengikuti p-value dan nilai MAPE yang dihasilkan ketika dokumen ini dijalankan.
